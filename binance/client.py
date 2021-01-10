@@ -13,9 +13,11 @@ class Client(object):
     API_URL = 'https://api.binance.com/api'
     WITHDRAW_API_URL = 'https://api.binance.com/wapi'
     WEBSITE_URL = 'https://www.binance.com'
+    TRANSFER_API_URL = 'https://api.binance.com/sapi'
     PUBLIC_API_VERSION = 'v1'
     PRIVATE_API_VERSION = 'v3'
     WITHDRAW_API_VERSION = 'v3'
+    TRANSFER_API_VERSION = 'v1'
 
     SYMBOL_TYPE_SPOT = 'SPOT'
 
@@ -1670,3 +1672,27 @@ class Client(object):
             'listenKey': listenKey
         }
         return self._delete('userDataStream', False, data=params)
+
+    def _create_transfer_api_uri(self, path):
+        return self.TRANSFER_API_URL + '/' + self.TRANSFER_API_VERSION + '/' + path
+
+    def _request_transfer_api(self, method, path, signed=False, **kwargs):
+        uri = self._create_transfer_api_uri(path)
+
+        return self._request(method, uri, signed, True, **kwargs)
+
+    def transfer(self, transfer_type, asset, amount):
+        params = {}
+        params['type'] = transfer_type
+        params['asset'] = asset
+        params['amount'] = amount
+        res = self._request_transfer_api('post', 'asset/transfer', True, data=params)
+        if not res['tranId']:
+            raise BinanceWithdrawException(res['msg'])
+        return res
+
+    def spotToFutureTransfer(self, asset, amount):
+        return self.transfer('MAIN_UMFUTURE', asset=asset, amount=amount)
+
+    def futureToSpotTransfer(self, asset, amount):
+        return self.transfer('UMFUTURE_MAIN', asset=asset, amount=amount)
