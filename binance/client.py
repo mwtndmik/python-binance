@@ -5,7 +5,6 @@ import hmac
 import requests
 import time
 from operator import itemgetter
-from .helpers import date_to_milliseconds, interval_to_milliseconds
 from .exceptions import BinanceAPIException, BinanceRequestException, BinanceWithdrawException
 
 
@@ -575,80 +574,6 @@ class Client(object):
         """
         return self._get('aggTrades', data=params)
 
-    def aggregate_trade_iter(self, symbol, start_str=None, last_id=None):
-        """Iterate over aggregate trade data from (start_time or last_id) to
-        the end of the history so far.
-
-        If start_time is specified, start with the first trade after
-        start_time. Meant to initialise a local cache of trade data.
-
-        If last_id is specified, start with the trade after it. This is meant
-        for updating a pre-existing local trade data cache.
-
-        Only allows start_str or last_id—not both. Not guaranteed to work
-        right if you're running more than one of these simultaneously. You
-        will probably hit your rate limit.
-
-        See dateparser docs for valid start and end string formats http://dateparser.readthedocs.io/en/latest/
-
-        If using offset strings for dates add "UTC" to date string e.g. "now UTC", "11 hours ago UTC"
-
-        :param symbol: Symbol string e.g. ETHBTC
-        :type symbol: str
-        :param start_str: Start date string in UTC format or timestamp in milliseconds. The iterator will
-        return the first trade occurring later than this time.
-        :type start_str: str|int
-        :param last_id: aggregate trade ID of the last known aggregate trade.
-        Not a regular trade ID. See https://github.com/binance-exchange/binance-official-api-docs/blob/master/rest-api.md#compressedaggregate-trades-list.
-
-        :returns: an iterator of JSON objects, one per trade. The format of
-        each object is identical to Client.aggregate_trades().
-
-        :type last_id: int
-        """
-        if start_str is not None and last_id is not None:
-            raise ValueError(
-                'start_time and last_id may not be simultaneously specified.')
-
-        # If there's no last_id, get one.
-        if last_id is None:
-            # Without a last_id, we actually need the first trade.  Normally,
-            # we'd get rid of it. See the next loop.
-            if start_str is None:
-                trades = self.get_aggregate_trades(symbol=symbol, fromId=0)
-            else:
-                # The difference between startTime and endTime should be less
-                # or equal than an hour and the result set should contain at
-                # least one trade.
-                if type(start_str) == int:
-                    start_ts = start_str
-                else:
-                    start_ts = date_to_milliseconds(start_str)
-                trades = self.get_aggregate_trades(
-                    symbol=symbol,
-                    startTime=start_ts,
-                    endTime=start_ts + (60 * 60 * 1000))
-            for t in trades:
-                yield t
-            last_id = trades[-1][self.AGG_ID]
-
-        while True:
-            # There is no need to wait between queries, to avoid hitting the
-            # rate limit. We're using blocking IO, and as long as we're the
-            # only thread running calls like this, Binance will automatically
-            # add the right delay time on their end, forcing us to wait for
-            # data. That really simplifies this function's job. Binance is
-            # fucking awesome.
-            trades = self.get_aggregate_trades(symbol=symbol, fromId=last_id)
-            # fromId=n returns a set starting with id n, but we already have
-            # that one. So get rid of the first item in the result set.
-            trades = trades[1:]
-            if len(trades) == 0:
-                return
-            for t in trades:
-                yield t
-            last_id = trades[-1][self.AGG_ID]
-
     def get_klines(self, **params):
         """Kline/candlestick bars for a symbol. Klines are uniquely identified by their open time.
 
@@ -710,88 +635,6 @@ class Client(object):
             endTime=None
         )
         return kline[0][0]
-
-    def get_historical_klines(self, symbol, interval, start_str, end_str=None):
-        """Get Historical Klines from Binance
-
-        See dateparser docs for valid start and end string formats http://dateparser.readthedocs.io/en/latest/
-
-        If using offset strings for dates add "UTC" to date string e.g. "now UTC", "11 hours ago UTC"
-
-        :param symbol: Name of symbol pair e.g BNBBTC
-        :type symbol: str
-        :param interval: Binance Kline interval
-        :type interval: str
-        :param start_str: Start date string in UTC format or timestamp in milliseconds
-        :type start_str: str|int
-        :param end_str: optional - end date string in UTC format or timestamp in milliseconds (default will fetch everything up to now)
-        :type end_str: str|int
-
-        :return: list of OHLCV values
-
-        """
-        # init our list
-        output_data = []
-
-        # setup the max limit
-        limit = 500
-
-        # convert interval to useful value in seconds
-        timeframe = interval_to_milliseconds(interval)
-
-        # convert our date strings to milliseconds
-        if type(start_str) == int:
-            start_ts = start_str
-        else:
-            start_ts = date_to_milliseconds(start_str)
-
-        # establish first available start timestamp
-        first_valid_ts = self._get_earliest_valid_timestamp(symbol, interval)
-        start_ts = max(start_ts, first_valid_ts)
-
-        # if an end time was passed convert it
-        end_ts = None
-        if end_str:
-            if type(end_str) == int:
-                end_ts = end_str
-            else:
-                end_ts = date_to_milliseconds(end_str)
-
-        idx = 0
-        while True:
-            # fetch the klines from start_ts up to max 500 entries or the end_ts if set
-            temp_data = self.get_klines(
-                symbol=symbol,
-                interval=interval,
-                limit=limit,
-                startTime=start_ts,
-                endTime=end_ts
-            )
-
-            # handle the case where exactly the limit amount of data was returned last loop
-            if not len(temp_data):
-                break
-
-            # append this loops data to our output data
-            output_data += temp_data
-
-            # set our start timestamp using the last value in the array
-            start_ts = temp_data[-1][0]
-
-            idx += 1
-            # check if we received less than the required limit and exit the loop
-            if len(temp_data) < limit:
-                # exit the while loop
-                break
-
-            # increment next call by our timeframe
-            start_ts += timeframe
-
-            # sleep after every 3rd call to be kind to the API
-            if idx % 3 == 0:
-                time.sleep(1)
-
-        return output_data
 
     def get_ticker(self, **params):
         """24 hour price change statistics.
